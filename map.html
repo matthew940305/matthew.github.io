@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>地圖地標管理</title>
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    font-family: Arial, "Noto Sans TC", sans-serif;
+    background-color: #f4f6f9;
+  }
+
+  #map {
+    width: 100%;
+    height: 70vh;
+  }
+
+  .controls {
+    box-sizing: border-box;
+    padding: 16px;
+    background-color: #fff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+
+  .controls h2 {
+    margin: 0 0 12px;
+    font-size: 18px;
+  }
+
+  .form-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .form-row label {
+    display: flex;
+    flex-direction: column;
+    font-size: 14px;
+  }
+
+  .form-row input {
+    width: 220px;
+    padding: 8px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+
+  .controls button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    background-color: #1976d2;
+    color: #fff;
+    cursor: pointer;
+  }
+
+  .controls button:hover {
+    background-color: #125a9c;
+  }
+
+  .note {
+    font-size: 13px;
+    color: #666;
+  }
+
+  .marker-label {
+    position: absolute;
+    padding: 0 2px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #d93025;
+    white-space: nowrap;
+    pointer-events: none;
+    transform: translateY(-50%);
+    z-index: 10;
+  }
+
+  .marker-list {
+    margin-top: 20px;
+    border-top: 1px solid #e0e0e0;
+    padding-top: 12px;
+  }
+
+  .marker-list h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+  }
+
+  .marker-list__items {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .marker-list__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 10px;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    background-color: #fafafa;
+  }
+
+  .marker-list__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 13px;
+  }
+
+  .marker-list__meta strong {
+    font-weight: 600;
+  }
+
+  .marker-list__coords {
+    color: #666;
+  }
+
+  .marker-list__delete {
+    padding: 6px 12px;
+    border: none;
+    border-radius: 4px;
+    background-color: #d93025;
+    color: #fff;
+    cursor: pointer;
+    font-size: 13px;
+  }
+
+  .marker-list__delete:hover {
+    background-color: #b5231a;
+  }
+
+  .marker-list__empty {
+    font-size: 13px;
+    color: #777;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<section class="controls">
+  <h2>輸入經緯度新增地標</h2>
+  <div class="form-row">
+    <label>
+      地標名稱
+      <input id="marker-title" type="text" placeholder="例如：校門口">
+    </label>
+    <label>
+      緯度 (Latitude)
+      <input id="marker-lat" type="number" step="any" placeholder="24.123947">
+    </label>
+    <label>
+      經度 (Longitude)
+      <input id="marker-lng" type="number" step="any" placeholder="120.674810">
+    </label>
+  </div>
+  <button id="add-marker" type="button">加入地標</button>
+  <p class="note">提示：點選地圖會自動填入該點的經緯度。</p>
+  <div class="marker-list">
+    <h3>已儲存地標</h3>
+    <ul id="marker-list" class="marker-list__items"></ul>
+  </div>
+</section>
+<script>
+let map;
+const markers = [];
+const markerData = [];
+let MarkerLabelClass = null;
+const STORAGE_KEY = 'nchuCustomMarkers';
+
+function generateMarkerId() {
+  return `marker-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function saveMarkers() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(markerData));
+  } catch (error) {
+    console.warn('儲存地標時發生錯誤：', error);
+  }
+}
+
+function renderMarkerList() {
+  const listEl = document.getElementById('marker-list');
+  if (!listEl) {
+    return;
+  }
+
+  listEl.innerHTML = '';
+
+  if (markerData.length === 0) {
+    const emptyItem = document.createElement('li');
+    emptyItem.className = 'marker-list__empty';
+    emptyItem.textContent = '目前沒有儲存的地標。';
+    listEl.appendChild(emptyItem);
+    return;
+  }
+
+  markerData.forEach((item, index) => {
+    if (!item) {
+      return;
+    }
+
+    const { id, title, lat, lng } = item;
+    const latText = typeof lat === 'number' ? lat.toFixed(6) : lat;
+    const lngText = typeof lng === 'number' ? lng.toFixed(6) : lng;
+
+    const listItem = document.createElement('li');
+    listItem.className = 'marker-list__item';
+    listItem.innerHTML = `
+      <div class="marker-list__meta">
+        <strong>${index + 1}. ${escapeHtml(title)}</strong>
+        <span class="marker-list__coords">${latText}, ${lngText}</span>
+      </div>
+      <button type="button" class="marker-list__delete" data-marker-id="${escapeHtml(id)}">刪除</button>
+    `;
+    listEl.appendChild(listItem);
+  });
+}
+
+function loadMarkers() {
+  let stored;
+  try {
+    stored = localStorage.getItem(STORAGE_KEY);
+  } catch (error) {
+    console.warn('讀取地標時發生錯誤：', error);
+    renderMarkerList();
+    return;
+  }
+
+  if (!stored) {
+    renderMarkerList();
+    return;
+  }
+
+  let items;
+  try {
+    items = JSON.parse(stored);
+  } catch (error) {
+    console.warn('地標資料格式錯誤，無法解析。', error);
+    renderMarkerList();
+    return;
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    renderMarkerList();
+    return;
+  }
+
+  markers.forEach((entry) => {
+    if (entry.label) {
+      entry.label.setMap(null);
+    }
+    entry.marker.setMap(null);
+  });
+  markers.length = 0;
+  markerData.length = 0;
+
+  const bounds = new google.maps.LatLngBounds();
+
+  items.forEach((item) => {
+    if (!item || typeof item.lat !== 'number' || typeof item.lng !== 'number') {
+      return;
+    }
+
+    const markerId = typeof item.id === 'string' ? item.id : generateMarkerId();
+    const title = item.title || `地標 ${markerData.length + 1}`;
+    const marker = addMarker({
+      position: { lat: item.lat, lng: item.lng },
+      title,
+      pan: false,
+      persist: false,
+      id: markerId,
+    });
+
+    if (marker) {
+      markerData.push({ id: markerId, title, lat: item.lat, lng: item.lng });
+      bounds.extend(marker.getPosition());
+    }
+  });
+
+  if (markerData.length > 0) {
+    saveMarkers();
+  }
+
+  if (!bounds.isEmpty()) {
+    map.fitBounds(bounds);
+    if (map.getZoom() > 18) {
+      map.setZoom(18);
+    }
+  }
+
+  renderMarkerList();
+}
+
+function createMarkerLabelClass() {
+  return class MarkerLabel extends google.maps.OverlayView {
+    constructor(marker, text) {
+      super();
+      this.marker = marker;
+      this.text = text;
+      this.div = null;
+      this.positionListener = null;
+      this.setMap(marker.getMap());
+    }
+
+    onAdd() {
+      this.div = document.createElement('div');
+      this.div.className = 'marker-label';
+      this.div.textContent = this.text;
+
+      const panes = this.getPanes();
+      panes.overlayLayer.appendChild(this.div);
+
+      this.positionListener = this.marker.addListener('position_changed', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      if (!this.div) {
+        return;
+      }
+
+      const projection = this.getProjection();
+      const position = this.marker.getPosition();
+      if (!projection || !position) {
+        return;
+      }
+
+      const point = projection.fromLatLngToDivPixel(position);
+      if (!point) {
+        return;
+      }
+
+      const thresholdX = 36;
+      const thresholdY = 28;
+      let placeLeft = false;
+
+      for (const entry of markers) {
+        if (!entry || entry.marker === this.marker) {
+          continue;
+        }
+
+        const otherPosition = entry.marker.getPosition();
+        if (!otherPosition) {
+          continue;
+        }
+
+        const otherPoint = projection.fromLatLngToDivPixel(otherPosition);
+        if (!otherPoint) {
+          continue;
+        }
+
+        const dx = otherPoint.x - point.x;
+        const dy = Math.abs(otherPoint.y - point.y);
+
+        if (dy <= thresholdY && dx > 0 && dx < thresholdX) {
+          placeLeft = true;
+          break;
+        }
+      }
+
+      if (placeLeft) {
+        const width = this.div.offsetWidth || 0;
+        this.div.style.left = `${point.x - width - 14}px`;
+      } else {
+        this.div.style.left = `${point.x + 14}px`;
+      }
+
+      this.div.style.top = `${point.y - 20}px`;
+    }
+
+    onRemove() {
+      if (this.positionListener) {
+        google.maps.event.removeListener(this.positionListener);
+        this.positionListener = null;
+      }
+
+      if (this.div) {
+        this.div.remove();
+        this.div = null;
+      }
+    }
+  };
+}
+
+function addMarker({ position, title, pan = true, persist = true, id }) {
+  let markerPosition;
+  if (position instanceof google.maps.LatLng) {
+    markerPosition = position;
+  } else if (position && typeof position.lat === 'number' && typeof position.lng === 'number') {
+    markerPosition = new google.maps.LatLng(position.lat, position.lng);
+  } else {
+    console.warn('無法建立地標：缺少有效座標。');
+    return null;
+  }
+
+  const markerId = typeof id === 'string' ? id : generateMarkerId();
+  const marker = new google.maps.Marker({
+    map,
+    position: markerPosition,
+    title,
+  });
+
+  let label = null;
+  if (MarkerLabelClass) {
+    label = new MarkerLabelClass(marker, title);
+  }
+
+  markers.push({ id: markerId, marker, label });
+
+  if (persist) {
+    const coords = marker.getPosition();
+    markerData.push({
+      id: markerId,
+      title,
+      lat: coords.lat(),
+      lng: coords.lng(),
+    });
+    saveMarkers();
+    renderMarkerList();
+  }
+
+  if (pan) {
+    map.panTo(marker.getPosition());
+  }
+
+  return marker;
+}
+
+function removeMarker(markerId) {
+  if (!markerId) {
+    return;
+  }
+
+  const markerIndex = markers.findIndex((item) => item.id === markerId);
+  if (markerIndex !== -1) {
+    const { marker, label } = markers[markerIndex];
+    if (label) {
+      label.setMap(null);
+    }
+    marker.setMap(null);
+    markers.splice(markerIndex, 1);
+  }
+
+  const dataIndex = markerData.findIndex((item) => item.id === markerId);
+  if (dataIndex !== -1) {
+    markerData.splice(dataIndex, 1);
+    saveMarkers();
+  }
+
+  renderMarkerList();
+}
+
+function hookUpForm() {
+  const titleInput = document.getElementById('marker-title');
+  const latInput = document.getElementById('marker-lat');
+  const lngInput = document.getElementById('marker-lng');
+  const addButton = document.getElementById('add-marker');
+
+  addButton.addEventListener('click', () => {
+    const title = titleInput.value.trim() || `地標 ${markerData.length + 1}`;
+    const lat = Number(latInput.value);
+    const lng = Number(lngInput.value);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      alert('請輸入正確的緯度與經度數值。');
+      return;
+    }
+
+    addMarker({
+      position: { lat, lng },
+      title,
+      pan: true,
+      persist: true,
+    });
+
+    titleInput.value = '';
+    latInput.value = '';
+    lngInput.value = '';
+  });
+
+  map.addListener('click', (event) => {
+    const lat = event.latLng.lat();
+    const lng = event.latLng.lng();
+
+    latInput.value = lat.toFixed(6);
+    lngInput.value = lng.toFixed(6);
+  });
+
+  const listEl = document.getElementById('marker-list');
+  listEl.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-marker-id]');
+    if (!button) {
+      return;
+    }
+
+    const markerId = button.getAttribute('data-marker-id');
+    removeMarker(markerId);
+  });
+}
+
+function initMap() {
+  const nchu = { lat: 24.123947, lng: 120.67481 };
+
+  map = new google.maps.Map(document.getElementById('map'), {
+    center: nchu,
+    zoom: 16,
+    styles: [
+      {
+        featureType: 'poi',
+        stylers: [{ visibility: 'off' }],
+      },
+      {
+        featureType: 'transit',
+        stylers: [{ visibility: 'off' }],
+      },
+    ],
+    mapTypeControl: false,
+    streetViewControl: false,
+  });
+
+  MarkerLabelClass = createMarkerLabelClass();
+  hookUpForm();
+  loadMarkers();
+}
+
+window.initMap = initMap;
+</script>
+<script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCGAbOXotd2Y9pUJI8Wue4QLrrRcLvw_8Q&callback=initMap"></script>
+</body>
+</html>
