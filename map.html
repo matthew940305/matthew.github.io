@@ -192,6 +192,68 @@ const markerData = [];
 const iconCache = new Map();
 let MarkerLabelClass = null;
 const STORAGE_KEY = 'nchuCustomMarkers';
+const DEFAULT_MARKERS = [
+  {
+    id: 'marker-1762338667425-3hw5ky',
+    title: '狂野森林西班牙冰沙',
+    lat: 24.125134374143922,
+    lng: 120.67671988067356,
+  },
+  {
+    id: 'marker-1762338710364-9u5gai',
+    title: '如常。所在',
+    lat: 24.12795,
+    lng: 120.667057,
+  },
+  {
+    id: 'marker-1762338742659-mp5eya',
+    title: '狸匠深夜拉麵',
+    lat: 24.12454686924043,
+    lng: 120.68107578758496,
+  },
+  {
+    id: 'marker-1762338779264-bb6ax5',
+    title: '小川家',
+    lat: 24.130070980368014,
+    lng: 120.68390958361233,
+  },
+  {
+    id: 'marker-1762338826720-o9jnwi',
+    title: '榮華街咖啡',
+    lat: 24.13101094626752,
+    lng: 120.6796395072879,
+  },
+  {
+    id: 'marker-1762338867422-belspx',
+    title: '臺中肉員',
+    lat: 24.13482948669639,
+    lng: 120.68266503872387,
+  },
+  {
+    id: 'marker-1762338890290-tcpdun',
+    title: '虎野脆皮雞蛋糕',
+    lat: 24.118692928541826,
+    lng: 120.66640012402004,
+  },
+  {
+    id: 'marker-1762339033499-boush1',
+    title: '沼澤咖哩',
+    lat: 24.127868022281522,
+    lng: 120.68341724730766,
+  },
+  {
+    id: 'marker-1762338915558-fuz476',
+    title: '牧禾堂 台中忠孝總店',
+    lat: 24.13027671258565,
+    lng: 120.68326704355799,
+  },
+  {
+    id: 'marker-1762339012205-dd296k',
+    title: '老陳海南雞飯 復興總店',
+    lat: 24.13227412862538,
+    lng: 120.67781679487511,
+  },
+];
 const dragState = {
   sourceId: null,
   hoverId: null,
@@ -333,30 +395,34 @@ function renderMarkerList() {
 }
 
 function loadMarkers() {
-  let stored;
+  let stored = null;
+  let items = null;
+
   try {
     stored = localStorage.getItem(STORAGE_KEY);
   } catch (error) {
     console.warn('讀取地標時發生錯誤：', error);
-    renderMarkerList();
-    return;
   }
 
-  if (!stored) {
-    renderMarkerList();
-    return;
-  }
-
-  let items;
-  try {
-    items = JSON.parse(stored);
-  } catch (error) {
-    console.warn('地標資料格式錯誤，無法解析：', error);
-    renderMarkerList();
-    return;
+  if (stored) {
+    try {
+      items = JSON.parse(stored);
+    } catch (error) {
+      console.warn('地標資料格式錯誤，無法解析：', error);
+    }
   }
 
   if (!Array.isArray(items) || items.length === 0) {
+    items = DEFAULT_MARKERS.map((marker) => ({
+      id: typeof marker.id === 'string' ? marker.id : generateMarkerId(),
+      title: marker.title || '未命名地標',
+      lat: Number(marker.lat),
+      lng: Number(marker.lng),
+    }));
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    markerData.length = 0;
     renderMarkerList();
     return;
   }
@@ -373,7 +439,7 @@ function loadMarkers() {
   const bounds = new google.maps.LatLngBounds();
 
   items.forEach((item) => {
-    if (!item || typeof item.lat !== 'number' || typeof item.lng !== 'number') {
+    if (!item || !Number.isFinite(item.lat) || !Number.isFinite(item.lng)) {
       return;
     }
 
