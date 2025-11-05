@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <title>地圖地標管理</title>
 <style>
+  :root {
+    color-scheme: light;
+  }
+
   html, body {
     height: 100%;
     margin: 0;
@@ -109,6 +113,7 @@
     border: 1px solid #e0e0e0;
     border-radius: 6px;
     background-color: #fafafa;
+    transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
   }
 
   .marker-list__meta {
@@ -144,6 +149,15 @@
     font-size: 13px;
     color: #777;
   }
+
+  .marker-list__item--dragging {
+    opacity: 0.4;
+  }
+
+  .marker-list__item--dragover {
+    border-color: #1976d2;
+    background-color: #e8f0fe;
+  }
 </style>
 </head>
 <body>
@@ -165,7 +179,7 @@
     </label>
   </div>
   <button id="add-marker" type="button">加入地標</button>
-  <p class="note">提示：點選地圖會自動填入該點的經緯度。</p>
+  <p class="note">提示：點選地圖會自動填入該點的經緯度。拖曳下方清單即可重新排序地標。</p>
   <div class="marker-list">
     <h3>已儲存地標</h3>
     <ul id="marker-list" class="marker-list__items"></ul>
@@ -175,8 +189,13 @@
 let map;
 const markers = [];
 const markerData = [];
+const iconCache = new Map();
 let MarkerLabelClass = null;
 const STORAGE_KEY = 'nchuCustomMarkers';
+const dragState = {
+  sourceId: null,
+  hoverId: null,
+};
 
 function generateMarkerId() {
   return `marker-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -197,6 +216,80 @@ function saveMarkers() {
   } catch (error) {
     console.warn('儲存地標時發生錯誤：', error);
   }
+}
+
+function getMarkerIcon(index) {
+  const number = index + 1;
+  if (number < 1 || number > 10) {
+    return null;
+  }
+
+  const cacheKey = `icon-${number}`;
+  if (iconCache.has(cacheKey)) {
+    return iconCache.get(cacheKey);
+  }
+
+  const icon = createMarkerIcon(number);
+  iconCache.set(cacheKey, icon);
+  return icon;
+}
+
+function createMarkerIcon(number) {
+  const labelText = number <= 99 ? number : '99+';
+  const svg = `
+    <svg width="44" height="48" viewBox="0 0 44 48" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="pinGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#f2503f"/>
+          <stop offset="100%" stop-color="#c41f18"/>
+        </linearGradient>
+        <filter id="pinShadow" x="-20%" y="-20%" width="140%" height="160%">
+          <feOffset dx="0" dy="2" in="SourceAlpha" result="offset"/>
+          <feGaussianBlur in="offset" stdDeviation="2" result="blur"/>
+          <feBlend in="SourceGraphic" in2="blur" mode="normal"/>
+        </filter>
+      </defs>
+      <g filter="url(#pinShadow)">
+        <path d="M22 5C12.0589 5 4 13.0589 4 23C4 34.24 22 43 22 43C22 43 40 34.24 40 23C40 13.0589 31.9411 5 22 5Z" fill="url(#pinGradient)"/>
+        <circle cx="22" cy="22" r="9" fill="rgba(255,255,255,0.2)"/>
+      </g>
+      <text x="22" y="27" text-anchor="middle" font-size="18" font-family="Arial, sans-serif" font-weight="700" fill="#fff">${labelText}</text>
+    </svg>
+  `;
+
+  const encoded = encodeURIComponent(svg)
+    .replace(/%0A/g, '')
+    .replace(/%20/g, ' ');
+
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encoded}`,
+    scaledSize: new google.maps.Size(38, 44),
+    anchor: new google.maps.Point(19, 44),
+  };
+}
+
+function refreshMarkerIcons() {
+  if (markers.length === 0) {
+    return;
+  }
+
+  markers.forEach((entry) => {
+    entry.marker.setIcon(null);
+  });
+
+  const entryMap = new Map();
+  markers.forEach((entry) => {
+    entryMap.set(entry.id, entry);
+  });
+
+  markerData.forEach((item, index) => {
+    const entry = entryMap.get(item.id);
+    if (!entry) {
+      return;
+    }
+    const icon = getMarkerIcon(index);
+    entry.marker.setIcon(icon || null);
+  });
 }
 
 function renderMarkerList() {
@@ -226,6 +319,8 @@ function renderMarkerList() {
 
     const listItem = document.createElement('li');
     listItem.className = 'marker-list__item';
+    listItem.dataset.markerId = id;
+    listItem.setAttribute('draggable', 'true');
     listItem.innerHTML = `
       <div class="marker-list__meta">
         <strong>${index + 1}. ${escapeHtml(title)}</strong>
@@ -256,7 +351,7 @@ function loadMarkers() {
   try {
     items = JSON.parse(stored);
   } catch (error) {
-    console.warn('地標資料格式錯誤，無法解析。', error);
+    console.warn('地標資料格式錯誤，無法解析：', error);
     renderMarkerList();
     return;
   }
@@ -309,6 +404,7 @@ function loadMarkers() {
     }
   }
 
+  refreshMarkerIcons();
   renderMarkerList();
 }
 
@@ -437,6 +533,7 @@ function addMarker({ position, title, pan = true, persist = true, id }) {
       lng: coords.lng(),
     });
     saveMarkers();
+    refreshMarkerIcons();
     renderMarkerList();
   }
 
@@ -468,6 +565,35 @@ function removeMarker(markerId) {
     saveMarkers();
   }
 
+  refreshMarkerIcons();
+  renderMarkerList();
+}
+
+function reorderMarkerData(sourceId, targetId) {
+  if (!sourceId || sourceId === targetId) {
+    return;
+  }
+
+  const sourceIndex = markerData.findIndex((item) => item.id === sourceId);
+  if (sourceIndex === -1) {
+    return;
+  }
+
+  let insertIndex = markerData.length;
+  if (targetId) {
+    const targetIndex = markerData.findIndex((item) => item.id === targetId);
+    if (targetIndex !== -1) {
+      insertIndex = targetIndex;
+    }
+  }
+
+  const [moved] = markerData.splice(sourceIndex, 1);
+  if (sourceIndex < insertIndex) {
+    insertIndex -= 1;
+  }
+  markerData.splice(insertIndex, 0, moved);
+  saveMarkers();
+  refreshMarkerIcons();
   renderMarkerList();
 }
 
@@ -517,6 +643,89 @@ function hookUpForm() {
     const markerId = button.getAttribute('data-marker-id');
     removeMarker(markerId);
   });
+
+  setupMarkerListDnD(listEl);
+}
+
+function setupMarkerListDnD(listEl) {
+  if (!listEl) {
+    return;
+  }
+
+  listEl.addEventListener('dragstart', (event) => {
+    const item = event.target.closest('li[data-marker-id]');
+    if (!item) {
+      return;
+    }
+
+    dragState.sourceId = item.dataset.markerId;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', dragState.sourceId);
+    item.classList.add('marker-list__item--dragging');
+  });
+
+  listEl.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    const item = event.target.closest('li[data-marker-id]');
+
+    if (!item || item.dataset.markerId === dragState.sourceId) {
+      clearHoverState(listEl);
+      return;
+    }
+
+    if (dragState.hoverId !== item.dataset.markerId) {
+      clearHoverState(listEl);
+    }
+
+    dragState.hoverId = item.dataset.markerId;
+    item.classList.add('marker-list__item--dragover');
+    event.dataTransfer.dropEffect = 'move';
+  });
+
+  listEl.addEventListener('dragleave', (event) => {
+    const item = event.target.closest('li[data-marker-id]');
+    if (item && item.dataset.markerId === dragState.hoverId) {
+      item.classList.remove('marker-list__item--dragover');
+      dragState.hoverId = null;
+    }
+  });
+
+  listEl.addEventListener('drop', (event) => {
+    event.preventDefault();
+    const sourceId = dragState.sourceId || event.dataTransfer.getData('text/plain');
+    const item = event.target.closest('li[data-marker-id]');
+    const targetId = item ? item.dataset.markerId : null;
+
+    cleanupDragState(listEl);
+    reorderMarkerData(sourceId, targetId);
+  });
+
+  listEl.addEventListener('dragend', () => {
+    cleanupDragState(listEl);
+  });
+}
+
+function clearHoverState(listEl) {
+  if (!dragState.hoverId) {
+    return;
+  }
+
+  const hoverEl = listEl.querySelector(`li[data-marker-id="${dragState.hoverId}"]`);
+  if (hoverEl) {
+    hoverEl.classList.remove('marker-list__item--dragover');
+  }
+  dragState.hoverId = null;
+}
+
+function cleanupDragState(listEl) {
+  clearHoverState(listEl);
+
+  const draggingEl = listEl.querySelector('.marker-list__item--dragging');
+  if (draggingEl) {
+    draggingEl.classList.remove('marker-list__item--dragging');
+  }
+
+  dragState.sourceId = null;
 }
 
 function initMap() {
