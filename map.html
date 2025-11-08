@@ -128,6 +128,35 @@
     gap: 12px;
   }
 
+  .zoom-control {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
+  .zoom-control__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    color: #546e7a;
+  }
+
+  .zoom-value {
+    font-weight: 600;
+    color: #37474f;
+    min-width: 32px;
+    text-align: right;
+  }
+
+  .zoom-control input[type="range"] {
+    width: 100%;
+    accent-color: #1976d2;
+    cursor: pointer;
+  }
+
   .form-row label {
     display: flex;
     flex-direction: column;
@@ -277,6 +306,13 @@
     </div>
     <div class="controls">
       <h2>新增地標</h2>
+      <div class="zoom-control">
+        <div class="zoom-control__header">
+          <span>地圖縮放</span>
+          <span id="map-zoom-value" class="zoom-value">15</span>
+        </div>
+        <input id="map-zoom" type="range" min="5" max="21" step="0.1" value="15">
+      </div>
       <div class="form-row">
         <label>
           地標名稱
@@ -676,6 +712,53 @@ function hookUpForm() {
   const latInput = document.getElementById('marker-lat');
   const lngInput = document.getElementById('marker-lng');
   const addButton = document.getElementById('add-marker');
+  const zoomSlider = document.getElementById('map-zoom');
+  const zoomValue = document.getElementById('map-zoom-value');
+
+  const formatZoomLabel = (value) => {
+    if (!Number.isFinite(value)) {
+      return '';
+    }
+    const rounded = Math.round(value * 10) / 10;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  };
+
+  const syncZoomUI = (zoom) => {
+    if (!zoomSlider || !Number.isFinite(zoom)) {
+      return;
+    }
+    const minZoom = Number(zoomSlider.min) || 0;
+    const maxZoom = Number(zoomSlider.max) || 21;
+    const clamped = Math.min(maxZoom, Math.max(minZoom, zoom));
+    const normalized = Math.round(clamped * 10) / 10;
+    zoomSlider.value = normalized.toString();
+    if (zoomValue) {
+      zoomValue.textContent = formatZoomLabel(normalized);
+    }
+  };
+
+  if (zoomSlider) {
+    zoomSlider.addEventListener('input', () => {
+      const zoomLevel = parseFloat(zoomSlider.value);
+      if (zoomValue) {
+        zoomValue.textContent = formatZoomLabel(zoomLevel);
+      }
+      if (map && Number.isFinite(zoomLevel)) {
+        map.setZoom(zoomLevel);
+      }
+    });
+  }
+
+  if (map && zoomSlider) {
+    const currentZoom = map.getZoom();
+    if (Number.isFinite(currentZoom)) {
+      syncZoomUI(currentZoom);
+    }
+    map.addListener('zoom_changed', () => {
+      const nextZoom = map.getZoom();
+      syncZoomUI(nextZoom);
+    });
+  }
 
   addButton.addEventListener('click', () => {
     const title = titleInput.value.trim() || `地標 ${markerData.length + 1}`;
@@ -808,6 +891,7 @@ function initMap() {
   map = new google.maps.Map(document.getElementById('map'), {
     center: nchu,
     zoom: 15,
+    isFractionalZoom: true,
     styles: [
       { featureType: 'poi', stylers: [{ visibility: 'off' }] },
       { featureType: 'transit', stylers: [{ visibility: 'off' }] },
