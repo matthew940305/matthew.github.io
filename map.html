@@ -19,14 +19,13 @@
   .app {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    min-height: 100vh;
     width: 100%;
   }
 
   .top-layout {
     display: flex;
     flex: 1 1 auto;
-    min-height: 72vh;
   }
 
   .summary-panel {
@@ -37,7 +36,6 @@
     box-sizing: border-box;
     background: linear-gradient(180deg, #ffffff 0%, #f4f7fb 100%);
     box-shadow: 2px 0 14px rgba(15, 23, 42, 0.08);
-    overflow-y: auto;
   }
 
   .summary-panel h1 {
@@ -94,13 +92,13 @@
   .map-wrapper {
     flex: 1;
     min-width: 0;
-    min-height: 72vh;
-    height: auto;
+    display: flex;
   }
 
   #map {
+    flex: 1;
     width: 100%;
-    height: 100%;
+    height: auto;
   }
 
   .bottom-panel {
@@ -208,6 +206,27 @@
     font-weight: 600;
   }
 
+  .marker-title {
+    display: inline;
+  }
+
+  .marker-title--stacked {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    line-height: 1.2;
+  }
+
+  .marker-title__line {
+    display: inline;
+  }
+
+  .marker-title__line--en {
+    font-size: 0.92em;
+    color: #546e7a;
+  }
+
   .marker-list__coords {
     color: #607d8b;
   }
@@ -285,15 +304,15 @@ const iconCache = new Map();
 const STORAGE_KEY = 'nchuCustomMarkers';
 const DEFAULT_MARKERS = [
   { id: 'marker-1762338667425-3hw5ky', title: '狂野森林西班牙冰沙 Wild Forest Spanish Smoothie', lat: 24.125134374143922, lng: 120.67671988067356 },
+  { id: 'marker-1762338890290-tcpdun', title: '虎野脆皮雞蛋糕 Hu Ya Crispy Egg Cakes', lat: 24.118692928541826, lng: 120.66640012402004 },
   { id: 'marker-1762338710364-9u5gai', title: '如常。所在 Café As Usual', lat: 24.12795, lng: 120.667057 },
-  { id: 'marker-1762338742659-mp5eya', title: '狸匠深夜拉麵 Tanuki Takumi Ramen', lat: 24.12454686924043, lng: 120.68107578758496 },
   { id: 'marker-1762338779264-bb6ax5', title: '小川家 Ogawaya', lat: 24.130070980368014, lng: 120.68390958361233 },
   { id: 'marker-1762338826720-o9jnwi', title: '榮華街咖啡 Ronghua.st Cafe', lat: 24.13101094626752, lng: 120.6796395072879 },
-  { id: 'marker-1762338867422-belspx', title: '臺中肉員 Taichung Rouyuan (Meatball)', lat: 24.13482948669639, lng: 120.68266503872387 },
-  { id: 'marker-1762338890290-tcpdun', title: '虎野脆皮雞蛋糕 Hu Ya Crispy Egg Cakes', lat: 24.118692928541826, lng: 120.66640012402004 },
   { id: 'marker-1762339033499-boush1', title: '沼澤咖哩 Swamp Curry', lat: 24.127868022281522, lng: 120.68341724730766 },
-  { id: 'marker-1762338915558-fuz476', title: '牧禾堂 台中忠孝總店 Muhetang (Zhongxiao Main Branch)', lat: 24.13027671258565, lng: 120.68326704355799 },
   { id: 'marker-1762339012205-dd296k', title: '老陳海南雞飯 復興總店 Lao Chen Hainan Chicken Rice', lat: 24.13227412862538, lng: 120.67781679487511 },
+  { id: 'marker-1762338742659-mp5eya', title: '狸匠深夜拉麵 Tanuki Takumi Ramen', lat: 24.12454686924043, lng: 120.68107578758496 },
+  { id: 'marker-1762338915558-fuz476', title: '牧禾堂 台中忠孝總店 Muhetang (Zhongxiao Main Branch)', lat: 24.13027671258565, lng: 120.68326704355799 },
+  { id: 'marker-1762338867422-belspx', title: '臺中肉員 Taichung Rouyuan (Meatball)', lat: 24.13482948669639, lng: 120.68266503872387 },
 ];
 const dragState = {
   sourceId: null,
@@ -311,6 +330,26 @@ function escapeHtml(text) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function formatTitleForDisplay(title) {
+  const rawText = typeof title === 'string' ? title.trim() : '';
+  if (!rawText) {
+    return '<span class="marker-title"><span class="marker-title__line">未命名地標</span></span>';
+  }
+
+  const latinIndex = rawText.search(/[A-Za-z]/);
+  const zhCandidate = latinIndex > 0 ? rawText.slice(0, latinIndex).trim() : '';
+  const enCandidate = latinIndex > 0 ? rawText.slice(latinIndex).trim() : '';
+  const hasZh = /[\u3400-\u9FFF]/.test(zhCandidate);
+
+  if (hasZh && enCandidate) {
+    const zhLine = `<span class=\"marker-title__line\">${escapeHtml(zhCandidate)}</span>`;
+    const enLine = `<span class=\"marker-title__line marker-title__line--en\">${escapeHtml(enCandidate)}</span>`;
+    return `<span class=\"marker-title marker-title--stacked\">${zhLine}${enLine}</span>`;
+  }
+
+  return `<span class=\"marker-title\"><span class=\"marker-title__line\">${escapeHtml(rawText)}</span></span>`;
 }
 
 function saveMarkers() {
@@ -420,6 +459,8 @@ function renderMarkerList() {
     const { id, title, lat, lng } = item;
     const latText = typeof lat === 'number' ? lat.toFixed(6) : lat;
     const lngText = typeof lng === 'number' ? lng.toFixed(6) : lng;
+    const displayTitle = title || `地標 ${index + 1}`;
+    const formattedTitle = formatTitleForDisplay(displayTitle);
 
     const listItem = document.createElement('li');
     listItem.className = 'marker-list__item';
@@ -427,7 +468,7 @@ function renderMarkerList() {
     listItem.setAttribute('draggable', 'true');
     listItem.innerHTML = `
       <div class="marker-list__meta">
-        <strong>${index + 1}. ${escapeHtml(title)}</strong>
+        <strong>${index + 1}. ${formattedTitle}</strong>
         <span class="marker-list__coords">${latText}, ${lngText}</span>
       </div>
         <button type="button" class="marker-list__delete" data-marker-id="${escapeHtml(id)}">刪除</button>
@@ -457,7 +498,8 @@ function renderMarkerSummary() {
   markerData.forEach((item, index) => {
     const li = document.createElement('li');
     li.className = 'marker-summary__item';
-    li.textContent = `${escapeHtml(item.title || `地標 ${index + 1}`)}`;
+    const displayTitle = item.title || `地標 ${index + 1}`;
+    li.innerHTML = formatTitleForDisplay(displayTitle);
     summaryEl.appendChild(li);
   });
 }
